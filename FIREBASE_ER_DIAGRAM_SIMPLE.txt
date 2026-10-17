@@ -1,0 +1,164 @@
+╔═══════════════════════════════════════════════════════════════════════╗
+║                  FIREBASE FIRESTORE ER DIAGRAM                        ║
+║                         Visual Representation                         ║
+╚═══════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                            USER                                     │
+│  {userId}                                                           │
+└────────┬────────────────────────────────────────────────────────────┘
+         │
+         ├────────────────────────────────────────────────────┐
+         │                                                    │
+         ▼                                                    ▼
+┌────────────────────────┐                    ┌────────────────────────┐
+│       SEASON           │                    │    STAT_INSIGHT        │
+│  {seasonId}            │                    │  {statName}            │
+├────────────────────────┤                    ├────────────────────────┤
+│ • id                   │                    │ • statName             │
+│ • name                 │                    │ • mainAnalysis         │
+│ • startDate            │                    │ • keyInsights[]        │
+│ • endDate              │                    │ • recommendations[]    │
+│ • isActive             │                    │ • trend                │
+│ • overallStats         │                    │ • trendPercentage      │
+└────────┬───────────────┘                    │ • lastUpdated          │
+         │                                    └────────────────────────┘
+         │
+         ▼
+┌────────────────────────┐
+│        GAME            │
+│  {gameId}              │
+├────────────────────────┤
+│ • id                   │
+│ • date                 │
+│ • stats ────────────┐  │
+└─────────────────────┼──┘
+                      │
+                      ▼
+         ┌────────────────────────┐
+         │    PLAYER_STATS        │
+         │   (Embedded Object)    │
+         ├────────────────────────┤
+         │ Raw Stats:             │
+         │ • atBats               │
+         │ • hits                 │
+         │ • runs                 │
+         │ • doubles              │
+         │ • triples              │
+         │ • homeRuns             │
+         │ • walks                │
+         │ • strikeouts           │
+         │ • inningsPitched       │
+         │ • earnedRuns           │
+         │                        │
+         │ Calculated Stats:      │
+         │ • battingAverage       │
+         │ • onBasePercentage     │
+         │ • sluggingPercentage   │
+         │ • runsCreated          │
+         │ • earnedRunAverage     │
+         │ • strikeoutRate        │
+         │ • (and more...)        │
+         └────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                            TEAM                                     │
+│  {teamId}                                                           │
+├─────────────────────────────────────────────────────────────────────┤
+│ • teamId                                                            │
+│ • teamName                                                          │
+│ • coachIds[] ────────┐                                              │
+│ • playerIds[] ───────┼───────────┐                                  │
+│ • createdAt          │           │                                  │
+│ • updatedAt          │           │                                  │
+│ • expiresAt          │           │                                  │
+└──────────────────────┼───────────┼──────────────────────────────────┘
+                       │           │
+                       │           │
+                       ▼           ▼
+              ┌──────────────┐  ┌──────────────┐
+              │    USER      │  │    USER      │
+              │  (coachIds)  │  │ (playerIds)  │
+              └──────────────┘  └──────────────┘
+                       │
+                       │
+                       ▼
+              ┌────────────────────────┐
+              │     GAME (root)        │
+              │  {gameId}              │
+              ├────────────────────────┤
+              │ • teamHome             │
+              │ • teamAway             │
+              │ • date                 │
+              └────────────────────────┘
+
+╔═══════════════════════════════════════════════════════════════════════╗
+║                         COLLECTION PATHS                              ║
+╚═══════════════════════════════════════════════════════════════════════╝
+
+users/
+└── {userId}/
+    ├── seasons/
+    │   └── {seasonId}/
+    │       ├── games/
+    │       │   └── {gameId}/ ──────────────┐
+    │       │       ├── id                  │
+    │       │       ├── date                │
+    │       │       └── stats ────────────┐ │
+    │       │                             │ │
+    │       └── (season doc)              │ │
+    │           ├── id                    │ │
+    │           ├── name                  │ │
+    │           ├── startDate             │ │
+    │           ├── endDate               │ │
+    │           ├── isActive              │ │
+    │           └── overallStats ─────────┼─┤
+    │                                     │ │
+    ├── statInsights/                     │ │
+    │   └── {statName}/ ──────────────────┼─┘
+    │       └── (StatInsight doc)         │
+    │                                     │
+    ├── conversations/                    │
+    │   └── {conversationId}/             │
+    │                                     │
+    ├── dashboard/                        │
+    │   └── {dashboardId}/                │
+    │                                     │
+    └── images/                           │
+        └── {imageId}/                    │
+                                          │
+teams/                                    │
+└── {teamId}/                             │
+    └── (Team doc)                        │
+                                          │
+games/ (root level)                       │
+└── {gameId}/                             │
+    └── (Game doc)                        │
+                                          │
+        ┌─────────────────────────────────┘
+        │
+        └──> PlayerStats embedded in:
+             • Game documents
+             • Season overallStats
+
+╔═══════════════════════════════════════════════════════════════════════╗
+║                      RELATIONSHIP CARDINALITY                         ║
+╚═══════════════════════════════════════════════════════════════════════╝
+
+User ────1:N────> Season ────1:N────> Game ────1:1────> PlayerStats
+ │                                                          │
+ │                                                          │
+ ├───1:N────> StatInsight                                   │
+ ├───1:N────> Conversation                                  │
+ ├───1:1────> Dashboard                                     │
+ ├───1:N────> Image                                         │
+ │                                                          │
+ └───N:1────< Team (via coachIds/playerIds)                │
+                                                                        │
+Team ────1:N────> Game (root collection)                               │
+                                                                        │
+            ┌───────────────────────────────────────────────────────────┘
+            │
+            └──> PlayerStats is aggregated across games
+                 to create Season.overallStats
+

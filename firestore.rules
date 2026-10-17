@@ -1,0 +1,171 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.get('admin', false) == true;
+    }
+
+    function teamDoc(teamId) {
+      return get(/databases/$(database)/documents/teams/$(teamId)).data;
+    }
+
+    function isCoachOf(teamId) {
+      return isSignedIn() && (isAdmin() || (
+        exists(/databases/$(database)/documents/teams/$(teamId)) &&
+        request.auth.uid in teamDoc(teamId).coachIds
+      ));
+    }
+
+    function isMemberOf(teamId) {
+      return isSignedIn() && (isAdmin() || (
+        exists(/databases/$(database)/documents/teams/$(teamId)) && (
+          request.auth.uid in teamDoc(teamId).coachIds ||
+          request.auth.uid in teamDoc(teamId).get('playerIds', [])
+        )
+      ));
+    }
+
+    // Fields only Cloud Functions may set: Pro entitlement, Scout data-sharing consent.
+    function serverOnlyUserFields() {
+      return ['isProMode', 'proSource', 'proGrantedAt', 'proProductId',
+              'proPurchaseUpdatedAt', 'proPurchasePlatform', 'promoCode',
+              'promoRedeemedAt', 'scoutDataSharing'];
+    }
+
+    // Coach accounts aren't open yet, so clients can only give themselves a player role.
+    function allowedSelfRole(data) {
+      return !('role' in data) || data.role in ['player', 'athlete'];
+    }
+
+    // User profile
+    match /users/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if isSignedIn() && request.auth.uid == uid
+        && !request.resource.data.keys().hasAny(serverOnlyUserFields())
+        && allowedSelfRole(request.resource.data);
+      allow update: if isSignedIn() && request.auth.uid == uid
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(serverOnlyUserFields())
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
+            || allowedSelfRole(request.resource.data));
+      allow delete: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Player profiles
+    match /playerProfiles/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Teams
+    match /teams/{teamId} {
+      allow read: if isSignedIn() && (
+        request.auth.uid in resource.data.coachIds ||
+        request.auth.uid in resource.data.get('playerIds', []) ||
+        isAdmin()
+      );
+
+      // Creator must list themselves as a coach.
+      allow create: if isSignedIn() && (request.resource.data.coachIds is list) && (request.auth.uid in request.resource.data.coachIds);
+
+      // Coaches edit their team; a player may only add themselves to playerIds (invite-code join).
+      allow update: if isSignedIn() && (
+        request.auth.uid in resource.data.coachIds || isAdmin() || (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['playerIds']) &&
+          request.resource.data.playerIds.toSet() ==
+            resource.data.get('playerIds', []).toSet().union([request.auth.uid].toSet())
+        )
+      );
+      allow delete: if isSignedIn() && (request.auth.uid in resource.data.coachIds || isAdmin());
+
+      match /roster/{playerId} {
+        allow read: if isCoachOf(teamId) || (isSignedIn() && request.auth.uid == playerId);
+        allow create, update, delete: if isCoachOf(teamId);
+      }
+
+      // Players write only their own entry (invite-code join); coaches manage all.
+      match /roster_entries/{playerId} {
+        allow read: if isCoachOf(teamId) || (isSignedIn() && request.auth.uid == playerId);
+        allow create, update, delete: if isCoachOf(teamId) || (isSignedIn() && request.auth.uid == playerId);
+      }
+
+      match /seasons/{seasonId} {
+        allow read: if isMemberOf(teamId);
+        allow create, update, delete: if isCoachOf(teamId);
+
+        match /games/{gameId} {
+          allow read: if isMemberOf(teamId);
+          allow create, update, delete: if isCoachOf(teamId);
+        }
+
+        // Team totals & per-player totals: coaches or Cloud Functions only.
+        match /stats/{doc=**} {
+          allow read: if isMemberOf(teamId);
+          allow write: if isCoachOf(teamId);
+        }
+      }
+    }
+
+    // User team memberships and roles (for RBAC)
+    match /users/{uid}/linkedTeams/{teamId} {
+      allow read, write: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+    }
+
+    match /users/{uid}/roles/{teamId} {
+      allow read, write: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+    }
+
+    // Analytics collection (read-only for team members)
+    match /analytics/{teamId}/{seasonId} {
+      allow read: if isMemberOf(teamId);
+      allow write: if isCoachOf(teamId);
+    }
+
+    // Everything under a user's own document (seasons, games, stats, chats, reports).
+    // The {collection} segment keeps this from also matching users/{userId} itself.
+    match /users/{userId}/{collection}/{document=**} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Team (coach) games. teamHome is the owning team's id.
+    match /games/{gameId} {
+      allow read: if isMemberOf(resource.data.teamHome);
+      allow create: if isCoachOf(request.resource.data.teamHome);
+      allow update, delete: if isCoachOf(resource.data.teamHome);
+
+      match /events/{eventId} {
+        allow read: if isMemberOf(get(/databases/$(database)/documents/games/$(gameId)).data.teamHome);
+        allow write: if isCoachOf(get(/databases/$(database)/documents/games/$(gameId)).data.teamHome);
+      }
+    }
+
+    // Created by the createInviteCode Cloud Function. Looking up a code requires knowing it;
+    // redeeming may only bump `uses` by one on an active code.
+    match /inviteCodes/{code} {
+      allow get: if isSignedIn();
+      allow list: if isCoachOf(resource.data.teamId);
+      allow update: if isSignedIn() && (
+        isCoachOf(resource.data.teamId) || (
+          resource.data.active == true &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uses']) &&
+          request.resource.data.uses == resource.data.get('uses', 0) + 1
+        )
+      );
+      allow create, delete: if false;
+    }
+
+    // Opt-in, pseudonymous Scout calibration data. Written and deleted only by
+    // Cloud Functions (setScoutDataSharing / analyzePerformance).
+    match /scoutCalibration/{docId} {
+      allow read, write: if false;
+    }
+
+    // Pro promo codes — managed in Console; redeem only via redeemPromoCode Cloud Function.
+    match /promoCodes/{codeId} {
+      allow read, write: if false;
+    }
+  }
+}

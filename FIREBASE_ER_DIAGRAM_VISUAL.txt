@@ -1,0 +1,158 @@
+═══════════════════════════════════════════════════════════════════════
+                    FIREBASE FIRESTORE ER DIAGRAM
+═══════════════════════════════════════════════════════════════════════
+
+users/
+│
+├── {userId}/
+│   │
+│   ├── seasons/                           COLLECTION
+│   │   │
+│   │   └── {seasonId}/                    DOCUMENT
+│   │       │
+│   │       ├── id: string
+│   │       ├── name: string
+│   │       ├── startDate: Timestamp
+│   │       ├── endDate: Timestamp
+│   │       ├── isActive: boolean
+│   │       └── overallStats: PlayerStats  (embedded object)
+│   │
+│   │       └── games/                     COLLECTION (subcollection)
+│   │           │
+│   │           └── {gameId}/              DOCUMENT
+│   │               ├── id: string
+│   │               ├── date: Timestamp
+│   │               └── stats: PlayerStats (embedded object)
+│   │
+│   ├── stats/                             COLLECTION
+│   │   │
+│   │   └── {statName}/                    DOCUMENT (e.g., "Batting Average")
+│   │       │
+│   │       └── insights/                  COLLECTION (subcollection)
+│   │           │
+│   │           └── {insightId}/           DOCUMENT
+│   │               ├── mainAnalysis: string
+│   │               ├── keyInsights: string[]
+│   │               ├── recommendations: string[]
+│   │               ├── trend: string
+│   │               └── timestamp: Timestamp
+│   │
+│   ├── conversations/                     COLLECTION
+│   │   │
+│   │   └── {conversationId}/              DOCUMENT
+│   │       ├── messages: array
+│   │       └── timestamp: Timestamp
+│   │
+│   ├── dashboard/                         COLLECTION
+│   │   │
+│   │   └── {dashboardId}/                 DOCUMENT
+│   │       └── (dashboard preferences/config)
+│   │
+│   └── images/                            COLLECTION
+│       │
+│       └── {imageId}/                     DOCUMENT
+│           └── (image metadata)
+│
+├── teams/                                 COLLECTION (root level)
+│   │
+│   └── {teamId}/                          DOCUMENT
+│       ├── teamId: string
+│       ├── teamName: string
+│       ├── coachIds: string[]
+│       ├── playerIds: string[]
+│       ├── createdAt: Timestamp
+│       ├── updatedAt: Timestamp
+│       └── expiresAt: Timestamp
+│
+└── games/                                 COLLECTION (root level)
+    │
+    └── {gameId}/                          DOCUMENT
+        ├── teamHome: string (teamId)
+        ├── teamAway: string (teamId)
+        └── date: Timestamp
+
+═══════════════════════════════════════════════════════════════════════
+                        PLAYERSTATS OBJECT
+═══════════════════════════════════════════════════════════════════════
+
+PlayerStats {
+  // Raw Hitting Stats
+  atBats: number
+  runs: number
+  hits: number
+  doubles: number
+  triples: number
+  homeRuns: number
+  walks: number
+  hitByPitch: number
+  sacrificeHits: number
+  stolenBases: number
+  runsBattedIn: number
+  strikeouts: number
+  
+  // Pitching Stats
+  inningsPitched: number
+  earnedRuns: number
+  totalPitches: number
+  
+  // Advanced Stats
+  twoStrikeCounts: number
+  successWithTwoStrikes: number
+  
+  // Calculated Stats (computed, not stored)
+  battingAverage: number          // hits / atBats
+  onBasePercentage: number        // (hits + walks + HBP) / (atBats + walks + HBP + SH)
+  sluggingPercentage: number      // (singles + 2×doubles + 3×triples + 4×HR) / atBats
+  onBasePlusSlugging: number      // OBP + SLG
+  isolatedPower: number           // SLG - AVG
+  runsCreated: number             // ((hits + walks) × totalBases) / (atBats + walks)
+  earnedRunAverage: number        // (earnedRuns × 9) / inningsPitched
+  strikeoutRate: number           // strikeouts / atBats
+  walksHitsPerInningPitched: number  // (walks + hits) / inningsPitched
+  twoStrikeSuccessRate: number    // successWithTwoStrikes / twoStrikeCounts
+  war: number                     // Wins Above Replacement
+}
+
+═══════════════════════════════════════════════════════════════════════
+                          RELATIONSHIPS
+═══════════════════════════════════════════════════════════════════════
+
+1. User ──< HAS MANY >── Seasons
+   │                          │
+   │                          └──< HAS MANY >── Games (with PlayerStats)
+
+2. User ──< HAS MANY >── Stat Insights (cached AI analysis per stat)
+
+3. User ──< HAS MANY >── Conversations (AI chat history)
+
+4. User ──< HAS ONE >── Dashboard (preferences/config)
+
+5. Team ──< HAS MANY >── Games (in root games/ collection)
+
+6. Team ──< HAS MANY >── Coaches (via coachIds array)
+
+7. Team ──< HAS MANY >── Players (via playerIds array)
+
+═══════════════════════════════════════════════════════════════════════
+                       QUERY PATTERNS
+═══════════════════════════════════════════════════════════════════════
+
+1. Get Active Season:
+   users/{userId}/seasons/ WHERE isActive == true
+
+2. Get Season Games (chronological):
+   users/{userId}/seasons/{seasonId}/games/ ORDER BY date ASC
+
+3. Get Cached AI Insight:
+   users/{userId}/stats/{statName}/insights/ (latest document)
+
+4. Get Team Games:
+   games/ WHERE teamHome == {teamId} OR teamAway == {teamId}
+
+5. Aggregate Season Stats:
+   - Read all games in season
+   - Sum raw stats (hits, atBats, etc.)
+   - Calculate cumulative stats (batting average, etc.)
+
+═══════════════════════════════════════════════════════════════════════
+
